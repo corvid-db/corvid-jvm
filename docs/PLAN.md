@@ -238,7 +238,7 @@ throws (DepthCapTest).
 
 ## Map-key enumeration
 
-No oracle, ever: v0.3.1's `corvid_value_map_keys` (OWNED strs cursor,
+No oracle, ever: v0.3.0's `corvid_value_map_keys` (OWNED strs cursor,
 ascending key-BYTE order; non-maps an EMPTY cursor, inert) is the only
 key source. The C decoder enumerates keys through the real iterator, so
 every read path (`get`, `scan` callbacks, `update` callbacks, query

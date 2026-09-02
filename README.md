@@ -116,7 +116,7 @@ by design there are no finalizer/Cleaner backstops making corvid calls
 
 ## Documents and maps
 
-Every decode enumerates map keys through the engine's v0.3.1 map-key
+Every decode enumerates map keys through the engine's v0.3.0 map-key
 iterator (`corvid_value_map_keys`, ascending key-byte order), so
 `get` / `scan` / `page` / query rows decode documents COMPLETE on any
 database, whatever wrote the data — no candidate-key oracle, ever
