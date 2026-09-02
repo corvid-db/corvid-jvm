@@ -15,7 +15,8 @@
  *     and DeleteLocalRef hygiene in loops. Every local ref is either
  *     returned, deleted, or scoped by a frame; the only references that
  *     outlive a call are the globals cached in JNI_OnLoad (the UTF_8
- *     charset and java/lang/Object).
+ *     charset, java/lang/Object, and the CorvidException/ErrCode.ARGUMENT
+ *     pair for coded marshal throws).
  *   - Strings cross as REAL UTF-8 bytes (String.getBytes(UTF_8) / new
  *     String(bytes, UTF_8)), never JNI's modified-UTF-8 jstring
  *     functions, on the engine side (FFI.md §1.5).
@@ -30,6 +31,10 @@
  *   - Consumption is unconditional (FFI.md §8): the Kotlin layer marks
  *     its side consumed whatever the status; this file frees owned
  *     values exactly once on every path.
+ *   - Encode carries the engine's nesting cap: a JVM object graph
+ *     deeper than CORVID_JNI_MAX_NESTING (128) throws
+ *     CorvidException(ErrCode.ARGUMENT) instead of recursing the C
+ *     stack toward a smash — see the #define by the encode section.
  */
 
 #include <jni.h>
@@ -47,6 +52,9 @@
 
 static jobject g_utf8_charset;   /* global ref — retained */
 static jclass g_object_class;    /* global ref — retained (NewObjectArray) */
+static jclass g_corvid_exception_class; /* global ref — retained (throw_argument) */
+static jobject g_errcode_argument;      /* global ref — retained (ErrCode.ARGUMENT) */
+static jmethodID g_corvid_exception_ctor; /* CorvidException(ErrCode, String)V */
 
 static jmethodID g_string_get_bytes;   /* String.getBytes(Charset)[B */
 static jmethodID g_string_ctor_utf8;   /* new String(byte[], Charset) */
@@ -121,6 +129,38 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
         (*env)->DeleteLocalRef(env, oc);
         if (og == NULL) return JNI_ERR;
         g_object_class = og;
+    }
+    /* CorvidException(ErrCode.ARGUMENT, message) — the encode-side
+     * depth cap (and any future marshal error that must surface as a
+     * coded CorvidException rather than a bare IllegalArgumentException)
+     * throws it from C. */
+    {
+        jclass ec = (*env)->FindClass(env, "corvid/CorvidException");
+        if (ec == NULL) return JNI_ERR;
+        g_corvid_exception_ctor = (*env)->GetMethodID(
+            env, ec, "<init>", "(Lcorvid/ErrCode;Ljava/lang/String;)V");
+        if (g_corvid_exception_ctor == NULL) {
+            (*env)->DeleteLocalRef(env, ec);
+            return JNI_ERR;
+        }
+        jobject eg = (*env)->NewGlobalRef(env, ec);
+        (*env)->DeleteLocalRef(env, ec);
+        if (eg == NULL) return JNI_ERR;
+        g_corvid_exception_class = eg;
+    }
+    {
+        jclass ac = (*env)->FindClass(env, "corvid/ErrCode");
+        if (ac == NULL) return JNI_ERR;
+        jfieldID fid = (*env)->GetStaticFieldID(
+            env, ac, "ARGUMENT", "Lcorvid/ErrCode;");
+        if (fid == NULL) { (*env)->DeleteLocalRef(env, ac); return JNI_ERR; }
+        jobject ao = (*env)->GetStaticObjectField(env, ac, fid);
+        (*env)->DeleteLocalRef(env, ac);
+        if (ao == NULL) return JNI_ERR;
+        jobject ag = (*env)->NewGlobalRef(env, ao);
+        (*env)->DeleteLocalRef(env, ao);
+        if (ag == NULL) return JNI_ERR;
+        g_errcode_argument = ag;
     }
 
     CACHE("java/lang/String", "getBytes", "(Ljava/nio/charset/Charset;)[B",
@@ -397,14 +437,50 @@ done:
 /* Document encode: JVM objects → owned corvid_value                  */
 /* ------------------------------------------------------------------ */
 
+/* The encode-side nesting cap: the engine's decode bound,
+ * corvid::value::MAX_NESTING (crates/corvid/src/value.rs — 128). The
+ * JNI shim is C over the ABI and cannot name the Rust constant, so it
+ * is mirrored here as a #define citing it; keep the two in lockstep.
+ * Two reasons it exists, in one number:
+ *   1. converter-accepted == decodable: a deeper value could be BUILT
+ *      through the value-constructor ABI but the engine could never
+ *      decode it back (dump/load), so the converter rejects it up
+ *      front instead of building a document the session cannot read.
+ *   2. native stack safety: encode_value recurses in C, and an
+ *      uncapped Kotlin list would smash the native stack long before
+ *      the JVM's own (catchable) StackOverflowError could fire. */
+#define CORVID_JNI_MAX_NESTING 128 /* == corvid::value::MAX_NESTING */
+
+/* Throw corvid.CorvidException(ErrCode.ARGUMENT — code 12 — msg). */
+static void throw_argument(JNIEnv *env, const char *msg) {
+    jstring m = utf8_to_jstring(env, msg, strlen(msg));
+    if (m == NULL) return; /* OOME pending */
+    jobject ex = (*env)->NewObject(env, g_corvid_exception_class,
+                                   g_corvid_exception_ctor,
+                                   g_errcode_argument, m);
+    (*env)->DeleteLocalRef(env, m);
+    if (ex != NULL) {
+        (*env)->Throw(env, ex);
+        (*env)->DeleteLocalRef(env, ex);
+    }
+}
+
 /* Recursive encode. Returns an OWNED value the caller frees (or that an
  * engine call consumes); NULL on failure with an exception pending.
  * Push consumes unconditionally, including on failure — on sub-failure
  * the partially built container is freed whole (its children were
- * already consumed into it). */
-static corvid_value *encode_value(JNIEnv *env, jobject v);
+ * already consumed into it). The depth parameter enforces
+ * CORVID_JNI_MAX_NESTING with the engine decoder's own convention:
+ * the top-level value is depth 0, every container's children one more,
+ * and a value PAST depth 128 is rejected (128 nested containers
+ * round-trip; 129 throw). */
+static corvid_value *encode_value_at(JNIEnv *env, jobject v, int depth);
 
-static corvid_value *encode_list(JNIEnv *env, jobject list) {
+static corvid_value *encode_value(JNIEnv *env, jobject v) {
+    return encode_value_at(env, v, 0);
+}
+
+static corvid_value *encode_list(JNIEnv *env, jobject list, int depth) {
     corvid_value *arr = corvid_value_array_new();
     if (arr == NULL) return NULL;
     jint n = (*env)->CallIntMethod(env, list, g_list_size);
@@ -412,7 +488,7 @@ static corvid_value *encode_list(JNIEnv *env, jobject list) {
     for (jint i = 0; i < n; i++) {
         jobject item = (*env)->CallObjectMethod(env, list, g_list_get, i);
         if ((*env)->ExceptionCheck(env)) { corvid_value_free(arr); return NULL; }
-        corvid_value *cv = encode_value(env, item);
+        corvid_value *cv = encode_value_at(env, item, depth + 1);
         if (item != NULL) (*env)->DeleteLocalRef(env, item);
         if (cv == NULL) { corvid_value_free(arr); return NULL; }
         if (corvid_value_array_push(arr, cv) != CORVID_OK) {
@@ -423,7 +499,7 @@ static corvid_value *encode_list(JNIEnv *env, jobject list) {
     return arr;
 }
 
-static corvid_value *encode_map(JNIEnv *env, jobject map) {
+static corvid_value *encode_map(JNIEnv *env, jobject map, int depth) {
     corvid_value *m = corvid_value_map_new();
     if (m == NULL) return NULL;
     jobject entries = (*env)->CallObjectMethod(env, map, g_map_entryset);
@@ -475,7 +551,7 @@ static corvid_value *encode_map(JNIEnv *env, jobject map) {
             if (val != NULL) (*env)->DeleteLocalRef(env, val);
             goto fail;
         }
-        corvid_value *cv = encode_value(env, val);
+        corvid_value *cv = encode_value_at(env, val, depth + 1);
         if (val != NULL) (*env)->DeleteLocalRef(env, val);
         if (cv == NULL) { free(kbuf); goto fail; }
         corvid_status st = corvid_value_map_put(m, kbuf, klen, cv); /* consumes cv */
@@ -491,8 +567,16 @@ fail:
     return NULL;
 }
 
-static corvid_value *encode_value(JNIEnv *env, jobject v) {
+static corvid_value *encode_value_at(JNIEnv *env, jobject v, int depth) {
     if (v == NULL) return corvid_value_null();
+    if (depth > CORVID_JNI_MAX_NESTING) {
+        char msg[64];
+        snprintf(msg, sizeof msg,
+                 "value nesting exceeds the maximum depth of %d",
+                 CORVID_JNI_MAX_NESTING);
+        throw_argument(env, msg);
+        return NULL;
+    }
 
     jclass cls = (*env)->GetObjectClass(env, v);
     if (cls == NULL) return NULL;
@@ -602,9 +686,9 @@ static corvid_value *encode_value(JNIEnv *env, jobject v) {
             out = corvid_value_vector((const float *)&g_empty_byte, 0);
         }
     } else if (isList) {
-        out = encode_list(env, v);
+        out = encode_list(env, v, depth);
     } else if (isMap) {
-        out = encode_map(env, v);
+        out = encode_map(env, v, depth);
     } else {
         (*env)->ThrowNew(env,
             (*env)->FindClass(env, "java/lang/IllegalArgumentException"),

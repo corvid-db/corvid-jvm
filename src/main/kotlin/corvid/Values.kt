@@ -19,6 +19,15 @@ import corvid.jni.Natives
 
 internal object Values {
 
+    /** The engine's decode bound — corvid::value::MAX_NESTING (128),
+     * mirrored as CORVID_JNI_MAX_NESTING in native/corvid_jni.c (the
+     * whole-document encode path). Converter-accepted == decodable: a
+     * value deeper than this could be BUILT through the constructor ABI
+     * but the engine could never decode it back (dump/load), so encode
+     * rejects it up front — and, on the JNI path, before the recursion
+     * in C can smash the native stack. */
+    internal const val MAX_NESTING = 128
+
     // ---- UTF-8 wire discipline (PLAN ruling 5) ----
     internal fun utf8(s: String): ByteArray = s.toByteArray(Charsets.UTF_8)
 
@@ -40,8 +49,16 @@ internal object Values {
     }
 
     // ---- encode: Kotlin value → OWNED handle (caller frees / engine
-    //      call consumes). Mirrors the C-side encode_value dispatch. ----
-    fun encode(v: Any?): Long = when (v) {
+    //      call consumes). Mirrors the C-side encode_value dispatch,
+    //      MAX_NESTING and all. ----
+    fun encode(v: Any?): Long = encode(v, 0)
+
+    private fun encode(v: Any?, depth: Int): Long {
+        if (depth > MAX_NESTING) throw CorvidException(
+            ErrCode.ARGUMENT,
+            "value nesting exceeds the maximum depth of $MAX_NESTING",
+        )
+        return when (v) {
         null -> Natives.nValueNull()
         is Boolean -> Natives.nValueBool(v)
         is Long -> Natives.nValueInt(v)
@@ -56,7 +73,7 @@ internal object Values {
         is List<*> -> {
             val arr = Natives.nValueArrayNew()
             for (item in v) {
-                val h = encode(item)
+                val h = encode(item, depth + 1)
                 check(Natives.nValueArrayPush(arr, h)) // consumes h (§8)
             }
             arr
@@ -71,7 +88,7 @@ internal object Values {
                         "map keys must be Strings (got ${k?.javaClass})",
                     )
                 }
-                val h = encode(item)
+                val h = encode(item, depth + 1)
                 check(Natives.nValueMapPut(m, utf8(k), h)) // consumes h (§8)
             }
             m
@@ -80,6 +97,7 @@ internal object Values {
             ErrCode.ARGUMENT,
             "unsupported Kotlin type ${v.javaClass.name} for a corvid value",
         )
+        }
     }
 
     // ---- decode: (borrowed or owned) handle → Kotlin value, COMPLETE

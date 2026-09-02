@@ -142,7 +142,11 @@ order and the inert shapes op by op.
 A linux/macos/windows × JDK {21, 17} matrix
 (`.github/workflows/ci.yml`): fetch + verify the pinned artifacts,
 build the shim, `gradlew test` (the golden suite) + the examples tour
-on every leg, plus the surface-gate job.
+on every leg, plus the surface-gate job. No sanitizer leg, by a
+recorded deferral (docs/PLAN.md, phase JVM1 §8): the engine's own CI
+already runs the cdylib under ASan/UBSan/LSan, and running the JVM
+itself under LSan drowns in JVM-runtime noise that suppression files
+would only over-suppress.
 
 ## Surface manifest (docs/SURFACE.tsv)
 

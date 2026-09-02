@@ -222,6 +222,20 @@ JNI decode is one crossing per row, so the saving would be smaller than
 the surprise; noted as a possible later divergence with its own
 reasoning). `phraseSearch` rows always carry documents.
 
+**Encode depth cap**: both encode paths (the C `encode_value` for
+whole documents, `Values.encode` for the handle/putMany path) cap
+container nesting at the engine's decode bound,
+`corvid::value::MAX_NESTING` (128) — mirrored as
+`CORVID_JNI_MAX_NESTING` (native/corvid_jni.c) and `Values
+.MAX_NESTING`. Converter-accepted == decodable: a deeper graph could be
+BUILT through the constructor ABI but the engine could never decode it
+back (dump/load), so it is rejected up front with
+`CorvidException(ErrCode.ARGUMENT)` — which, on the JNI path, also
+stops the C recursion before an uncapped Kotlin list can smash the
+native stack. The boundary is the engine decoder's own (top-level =
+depth 0, boundary inclusive): 128 nested containers round-trip, 129
+throws (DepthCapTest).
+
 ## Map-key enumeration
 
 No oracle, ever: v0.3.0's `corvid_value_map_keys` (OWNED strs cursor,
@@ -279,6 +293,22 @@ Modern minimums, CI rides current lines:
 8. **CI** — linux/macos/windows matrix: fetch+verify, build shim,
    Gradle test (golden suite) + examples tour; a JVM 17 floor leg; the
    surface-gate job. Under ~8 minutes.
+
+   **The deferred sanitizer leg, and why** (recorded here, not only in
+   the engine-side process report): the engine's own CI runs the
+   cdylib + its C smoke suite under ASan/UBSan/LSan on Linux, so the
+   engine side of the seam — where the memory liability concentrates —
+   is sanitizer-covered; the shim's marshal surface is exercised line
+   by line by the golden suite on every leg. A binding-side sanitizer
+   leg on `gradlew test` would mean running the JVM itself under
+   ASan/LSan: the JVM runtime's own native allocations drown LSan, and
+   the suppression files that silence them are broad enough to also
+   mask genuine shim leaks — a leg that cannot fail for the right
+   reasons. Deferred until there is a shim-only harness (C-level unit
+   tests of the marshal layer, no JVM in the process) or a suppression
+   story that provably cannot hide shim defects; until then the
+   compile is `-Wall -Wextra` clean and every free path is golden-
+   exercised.
 
 Out of scope for JVM1: coroutine wrappers, Android AAR (documented
 follow-up above), Maven Central publish (prepared posture only —
