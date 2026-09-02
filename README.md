@@ -44,7 +44,7 @@ callback checks, the same-thread last-error guarantee), lives in
   `scripts/build-native.sh` / `build-native.ps1` compile the shim with
   the platform C compiler (clang/gcc/MSVC). Requirements stop at "a JDK
   17+ and a C compiler".
-- **One exact engine pin** — `v0.3.1`, living in one variable per fetch
+- **One exact engine pin** — `v0.3.2`, living in one variable per fetch
   script (`CORVID_VERSION` in `fetch.sh`, `$CorvidVersion` in
   `fetch.ps1`), stamped into `deps/version.txt`.
 - **No vendored binaries in git** (`deps/` is gitignored) and **no
@@ -58,7 +58,7 @@ Gradle 8.14+ (the wrapper is pinned), a C compiler, `curl` (or
 PowerShell 5+ on Windows).
 
 ```sh
-./fetch.sh                    # download + verify corvid v0.3.1
+./fetch.sh                    # download + verify corvid v0.3.2
 ./scripts/build-native.sh     # compile the JNI shim into build/native
 ./gradlew test                # the golden suite (267 lines, 8 fixtures)
 ./gradlew examples            # the six-example tour
@@ -163,7 +163,7 @@ user's bug report.
 ## Versioning
 
 The engine pin lives in one variable in the fetch scripts
-(`CORVID_VERSION=v0.3.1`). Artifacts always come from that exact tag's
+(`CORVID_VERSION=v0.3.2`). Artifacts always come from that exact tag's
 GitHub release and are sha256-verified; `deps/` is never committed.
 
 ## License
