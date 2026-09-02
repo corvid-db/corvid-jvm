@@ -1,0 +1,6 @@
+# Byte-identical checkouts on every platform: no line-ending
+# conversion, ever. The vendored golden/ fixtures are byte-compared
+# against the pinned release's copies (fetch.sh / fetch.ps1) — a CRLF
+# rewrite on Windows would corrupt that byte comparison (and the
+# 267-line counts the harness derives from the fixtures).
+* -text

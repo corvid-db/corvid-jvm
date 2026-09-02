@@ -1,0 +1,15 @@
+# Fetched engine artifacts — never vendored (docs/PLAN.md binding rules).
+deps/
+
+# Gradle build output (also holds the compiled JNI shim).
+.gradle/
+build/
+.kotlin/
+
+# IDE noise.
+.idea/
+*.iml
+.vscode/
+
+# macOS cruft.
+.DS_Store
