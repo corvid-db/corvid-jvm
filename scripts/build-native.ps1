@@ -9,7 +9,9 @@
 
 $ErrorActionPreference = "Stop"
 
-$Root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+# The repo root (this script lives in <root>\scripts; ONE parent hop —
+# fetch.ps1's $PSScriptRoot convention).
+$Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
 
 if (-not (Test-Path "deps\current\corvid.h")) {
