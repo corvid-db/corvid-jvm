@@ -25,11 +25,14 @@ kotlin {
     }
 }
 
-java {
-    toolchain {
-        // Compile against any available JDK; the bytecode floor is 17.
-        languageVersion.set(JavaLanguageVersion.of(17))
-    }
+// No java-toolchain pin: the build is pure Kotlin (jvmTarget 17 above),
+// and a pinned toolchain would demand a SECOND JDK on a leg whose
+// runner JVM is 21 (Gradle cannot provision one without extra repos —
+// the Windows jdk21 CI leg tripped exactly there). Instead the 17
+// bytecode floor is enforced with --release, checked against whichever
+// JDK runs Gradle (21 or 17 on CI).
+tasks.withType<JavaCompile>().configureEach {
+    options.release.set(17)
 }
 
 sourceSets {
