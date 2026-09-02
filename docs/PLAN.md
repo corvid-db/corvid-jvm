@@ -53,7 +53,7 @@ Consequences, all locked:
   platform C compiler (clang/gcc/MSVC `cl`) — a toolchain every JVM
   developer already has alongside the JDK.
 - **Pin EXACT engine tags.** One engine version at a time; today
-  `v0.3.4`. The pin lives in exactly one variable per fetch script
+  `v0.4.0`. The pin lives in exactly one variable per fetch script
   (`CORVID_VERSION` / `$CorvidVersion`) and is stamped into
   `deps/version.txt`.
 - **No vendored binaries in git.** `deps/` and `build/` are gitignored.
@@ -81,7 +81,7 @@ the decision is not re-litigated.
 Inherited from the bindings program's master plan and non-negotiable:
 
 > **A binding opens with the golden-suite port.** The engine's golden
-> fixtures (267 executable lines across 8 files at v0.3.4) are the
+> fixtures (267 executable lines across 8 files at v0.4.0) are the
 > contract; a binding that wraps the ABI before it can replay the
 > contract is building on unverified ground.
 
