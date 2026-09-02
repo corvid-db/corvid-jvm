@@ -125,18 +125,6 @@ that engine order; `Float32Array` values decode to `FloatArray`,
 bytes to `ByteArray`. The `VMAP_KEYS`/`GET_KEYS` golden lines pin the
 order and the inert shapes op by op.
 
-## What's inside
-
-| Path | What it is |
-| --- | --- |
-| `fetch.sh` / `fetch.ps1` | Download the pinned release archive, verify (sha256) against `checksums.txt`, byte-check the golden fixtures, normalize into `deps/current/` |
-| `native/corvid_jni.c` | The JNI shim — every line of C interop: the corvid.h link, the recursive UTF-8-safe document encoder/decoder, the scan/update callback bridges, the exception-pending checks |
-| `src/main/kotlin/corvid/` | The Kotlin API (`Db`/`Collection`/`Query`/`Predicate`, the value mapping, `CorvidException` + `ErrCode`) over an `internal` long-handle JNI layer (`jni/Natives.kt`) |
-| `src/test/kotlin/corvid/GoldenTest.kt` | The golden-suite port — 267 fixture lines through the binding, no softened asserts |
-| `golden/` | The engine's golden fixtures, vendored byte-identical (verified against each release) |
-| `examples/{Quickstart,Hybrid,VectorIndex,TextSearch,Graph,Geo}.kt` | The examples tour — one runnable `main` per concept, `./gradlew examples` on every CI leg: the README quickstart, hybrid RRF+MMR, the three vector-index families vs exact, BM25 incl. CJK + phrase search, graph + delete cascade, geo radius/bbox/nearest |
-| `docs/PLAN.md` | The binding's plan: architecture ruling, JNI discipline, lifetime mapping, toolchain policy, the AAR follow-up |
-
 ## CI
 
 A linux/macos/windows × JDK {21, 17} matrix
