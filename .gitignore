@@ -13,3 +13,7 @@ build/
 
 # macOS cruft.
 .DS_Store
+
+# Android SDK location (machine-specific).
+local.properties
+android/.gradle/

@@ -66,20 +66,59 @@ Consequences, all locked:
   against the fixtures vendored in this repo — a mismatch is a hard
   fetch failure.
 
+### Android (SHIPPED — the follow-up below is closed)
+
+**The AAR trigger fired.** The engine started publishing Android
+cdylib artifact sets on `aarch64-linux-android` + `x86_64-linux-android`
+(v0.4.1, NDK r28b at API 24), and the "first Android consumer"
+requirement arrived with the platform-coverage program — so
+`io.github.corvid-db:corvid-android` now publishes beside corvid-jvm
+from THIS repo, same tag, same Central bundle/upload:
+
+- **Same Kotlin sources, no fork.** The `android/` Gradle build is a
+  separate project (the root build stays pure-JVM — no Android SDK on
+  desktop dev machines or desktop CI legs) that compiles the SHARED
+  `src/main/kotlin` wrapper against `android.jar` and packages it with
+  both ABI pairs as `jni/<abi>/{libcorvid.so,libcorvidjni.so}` (the
+  standard AAR native layout; the package manager installs them into
+  the app's `nativeLibraryDir`).
+- **The loader's Android branch.** `NativeLoading.onAndroid` (ART/
+  Dalvik detected via `java.vm.name` — pure `java.*`, so the shared
+  sources compile for the desktop JVM unchanged) routes `Corvid.load()`
+  through `System.loadLibrary("corvid")` + `System.loadLibrary(
+  "corvidjni")` — the classloader-namespace lookup over
+  `nativeLibraryDir`. Engine first, same order as every platform. A
+  miss falls through to the desktop paths.
+- **minSdk 26**: the shared `NativeLoading` uses `java.nio.file`
+  (API 26+); the engine `.so` files target API 24 (a superset — the
+  shim/engine could serve an app that lowered its own floor with a
+  custom loader). ABIs: `arm64-v8a` + `x86_64` (emulator); 32-bit ABIs
+  are deliberately out — Play has required 64-bit since 2019.
+- **The JNI shim's one Android portability point**: ART is a JNI 1.6
+  VM — its `jni.h` defines no `JNI_VERSION_1_8` and `GetEnv(1_8)`
+  returns `JNI_EVERSION`. The shim requests `JNI_VERSION_1_6` under
+  `__ANDROID__` (`CORVID_JNI_VERSION`), 1.8 elsewhere.
+- **Gates**: the android Gradle build's unit test asserts the
+  assembled AAR carries both ABI pairs + `classes.jar` (and no foreign
+  ABI) — it runs in CI and in the release publish job BEFORE the
+  Central upload; the desktop matrix runs the golden suite against the
+  shared sources. The **on-device instrumented smoke**
+  (`connectedDebugAndroidTest` against the arm64 ATD emulator —
+  `avdmanager create avd -n corvid-atd -k
+  "system-images;android-34;aosp_atd;arm64-v8a"`) is the documented
+  LOCAL device gate: it exercised the real load/insert/vector-query/
+  phrase path at AAR bring-up (1 test, 0 failures, 2026-09-03) and
+  stays out of CI — emulator legs are flake factories, and everything
+  above the loader branch is platform-independent Kotlin already
+  golden-gated on the desktop.
+
 ### Follow-up (deliberately out of scope for this bootstrap)
 
-**Android AAR bundling.** The artifact today is a JVM library whose
-per-platform classifier jars bundle the JNI shim + engine cdylib (the
-"published artifact shape" below). An Android AAR that pre-bundles the
-`.so` files for `arm64-v8a`/`x86_64` behind the same Kotlin API is a
-packaging change only — no API or lifetime semantics move. Trigger
-(re-ruled 2026, regressed to the original): **a first Android consumer
-request** — the Maven Central publish no longer triggers it, because
-the engine publishes NO android cdylib artifacts (verified against the
-engine release matrix: apple x64/arm64, linux-gnu x64/arm64, windows
-x64 — nothing for `linux-android`/`android` targets), so an AAR would
-have nothing to bundle until the engine ships them. Tracked here so
-the decision is not re-litigated.
+**(was) Android AAR bundling** — SHIPPED 2026-09-03, see the Android
+section above. The original trigger ("a first Android consumer")
+arrived with the platform-coverage program; the engine-side blocker it
+recorded (no android cdylib artifacts on the release) closed at engine
+v0.4.1.
 
 ### Published artifact shape (the publish-prep ruling)
 

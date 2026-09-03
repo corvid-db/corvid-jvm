@@ -143,4 +143,8 @@ resolving only from Central.
 - **The consumer story needs nothing else.** Published jars are
   self-contained: the platform classifier jar bundles the JNI shim and
   the engine cdylib, and the loader extracts + `System.load()`s them
-  from the classpath (see README "Installing").
+  from the classpath (see README "Installing"). Since the Android
+  program, the SAME bundle/upload also carries
+  `io.github.corvid-db:corvid-android` — one AAR with both ABI pairs
+  as jniLibs; the namespace/verification setup above covers it
+  unchanged (same `io.github.corvid-db` group).

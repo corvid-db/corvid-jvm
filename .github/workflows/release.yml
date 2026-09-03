@@ -7,8 +7,10 @@
 #
 # Artifact shape (the locked ruling): empty-of-natives main jar +
 # sources + javadoc + one classifier jar per platform bundling the JNI
-# shim AND the fetched engine cdylib. The engine publishes cdylibs for
-# exactly the five targets below (NOT android).
+# shim AND the fetched engine cdylib, PLUS the corvid-android AAR — the
+# same Kotlin wrapper compiled against android.jar with BOTH ABI pairs
+# (arm64-v8a, x86_64) as jniLibs — published alongside as
+# io.github.corvid-db:corvid-android in the same bundle/upload.
 #
 # Legs:
 #   gate        — fail-fast BEFORE the matrix burns 5-15 minutes: the
@@ -237,12 +239,39 @@ jobs:
           path: build/natives/${{ matrix.classifier }}
           if-no-files-found: error
 
-  publish:
-    name: Assemble, sign, publish to Central Portal
-    needs: [credentials, natives]
-    if: needs.credentials.outputs.configured == 'true'
+  natives-android:
+    name: natives-android (NDK r28b, both ABIs)
+    needs: credentials
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      # NDK r28b = 28.2.13676358 — the version scripts/build-native-android.sh
+      # was proven with locally (and the engine's android cdylibs are built
+      # with the same revision). Not cached: a release runs a handful of
+      # times per cycle and the NDK would crowd the repo cache budget.
+      - name: Install the NDK
+        run: |
+          curl -fsSL -o /tmp/ndk.zip https://dl.google.com/android/repository/android-ndk-r28b-linux.zip
+          unzip -q /tmp/ndk.zip -d "$RUNNER_TEMP"
+          echo "ANDROID_NDK_HOME=$RUNNER_TEMP/android-ndk-r28b" >> "$GITHUB_ENV"
+      # fetch.sh's CORVID_VERSION (verified == tag by the gate) drives both
+      # the engine-artifact download (sha256 + golden byte-compare) and the
+      # shim compile — same discipline as the desktop legs.
+      - name: Fetch engine android sets + compile the JNI shim (both ABIs)
+        run: scripts/build-native-android.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: natives-android-jnilibs
+          path: build/natives-android-jnilibs
+          if-no-files-found: error
+
+  publish:
+    name: Assemble, sign, publish to Central Portal
+    needs: [credentials, natives, natives-android]
+    if: needs.credentials.outputs.configured == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
     env:
       ORG_GRADLE_PROJECT_signingKey: ${{ secrets.ORG_GRADLE_PROJECT_signingKey }}
       ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.ORG_GRADLE_PROJECT_signingPassword }}
@@ -276,6 +305,10 @@ jobs:
         with:
           name: natives-windows-x64
           path: build/natives/windows-x64
+      - uses: actions/download-artifact@v4
+        with:
+          name: natives-android-jnilibs
+          path: build/natives-android-jnilibs
 
       - name: Verify each pair is complete
         run: |
@@ -293,10 +326,42 @@ jobs:
           check_pair linux-x64     libcorvidjni.so   libcorvid.so
           check_pair linux-arm64   libcorvidjni.so   libcorvid.so
           check_pair windows-x64   corvidjni.dll     corvid.dll
+          # The AAR's jniLibs pairs (the android Gradle build consumes
+          # this exact path).
+          for abi in arm64-v8a x86_64; do
+            for f in libcorvid.so libcorvidjni.so; do
+              if [ ! -f "build/natives-android-jnilibs/$abi/$f" ]; then
+                echo "::error::build/natives-android-jnilibs/$abi is missing $f" >&2
+                exit 1
+              fi
+            done
+          done
+          ls -l build/natives-android-jnilibs/*
 
       - name: Assemble + sign the bundle (Gradle maven-publish)
         run: >
           ./gradlew publishMavenPublicationToStagingRepository
+          -Pversion="${GITHUB_REF_NAME#v}"
+          --console=plain --no-daemon
+
+      # The corvid-android AAR joins the SAME staging tree (the android
+      # build's staging repo IS ../build/staging): one bundle, one upload,
+      # io/github/corvid-db/{corvid-jvm,corvid-android}. Needs the Android
+      # SDK for assemble only — the jniLibs pairs arrive pre-compiled from
+      # the natives-android leg, so no NDK here. The AAR structure gate
+      # (both ABI pairs + classes inside the AAR) runs BEFORE the publish
+      # task so a malformed AAR fails the job, never a consumer.
+      - uses: android-actions/setup-android@v3
+      - name: Android SDK bits for assemble (platform + build tools)
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" >/dev/null
+      - name: AAR structure gate (both ABI pairs + classes in the AAR)
+        run: >
+          ./gradlew -p android test
+          -Pversion="${GITHUB_REF_NAME#v}"
+          --console=plain --no-daemon
+      - name: Assemble + sign the corvid-android AAR into the same staging tree
+        run: >
+          ./gradlew -p android publishAndroidPublicationToStagingRepository
           -Pversion="${GITHUB_REF_NAME#v}"
           --console=plain --no-daemon
 
@@ -314,7 +379,7 @@ jobs:
           token: ${{ secrets.CENTRAL_PORTAL_TOKEN }}
           dir: build/staging
           publishing-type: automatic
-          deployment-name: corvid-jvm-${{ github.ref_name }}
+          deployment-name: corvid-jvm-android-${{ github.ref_name }}
           # Gradle's maven-publish staging already carries .md5/.sha1
           # (and Central's sha256/512); the action's default FAILS on
           # those. false = the action's OVERWRITE_EXISTING policy
@@ -324,7 +389,7 @@ jobs:
 
   publish-skipped:
     name: Publish SKIPPED — Central Portal credentials not configured
-    needs: [credentials, natives]
+    needs: [credentials, natives, natives-android]
     if: needs.credentials.outputs.configured == 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 5

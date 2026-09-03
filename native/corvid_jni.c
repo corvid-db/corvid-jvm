@@ -50,6 +50,16 @@
 /* Cached VM references (JNI_OnLoad)                                   */
 /* ------------------------------------------------------------------ */
 
+/* ART (Android) is a JNI 1.6 VM: its jni.h defines no JNI_VERSION_1_8,
+ * and GetEnv(..., 1_8) there returns JNI_EVERSION. Desktop JVMs are
+ * 1.8+. The two JNI_OnLoad uses below go through this constant so the
+ * same shim compiles and loads on both. */
+#ifdef __ANDROID__
+#define CORVID_JNI_VERSION JNI_VERSION_1_6
+#else
+#define CORVID_JNI_VERSION JNI_VERSION_1_8
+#endif
+
 static jobject g_utf8_charset;   /* global ref — retained */
 static jclass g_object_class;    /* global ref — retained (NewObjectArray) */
 static jclass g_corvid_exception_class; /* global ref — retained (throw_argument) */
@@ -85,7 +95,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     (void)vm;
     (void)reserved;
     JNIEnv *env = NULL;
-    if ((*vm)->GetEnv(vm, (void **)&env, JNI_VERSION_1_8) != JNI_OK)
+    if ((*vm)->GetEnv(vm, (void **)&env, CORVID_JNI_VERSION) != JNI_OK)
         return JNI_ERR;
 
 #define CACHE_GLOBAL(var, clsName, fieldName, sig)                     \
@@ -195,7 +205,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     CACHE("java/util/Map$Entry", "getValue", "()Ljava/lang/Object;",
           g_entry_getvalue);
 
-    return JNI_VERSION_1_8;
+    return CORVID_JNI_VERSION;
 }
 
 /* ------------------------------------------------------------------ */

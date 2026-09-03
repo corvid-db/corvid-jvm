@@ -83,6 +83,21 @@ internal object NativeLoading {
         else -> "libcorvidjni.so"
     }
 
+    /**
+     * Android (ART/Dalvik — the corvid-android AAR consumer): true when
+     * this JVM is a Dalvik-descended VM. On Android the pair ships as
+     * jniLibs inside the AAR, so the Android loader path is
+     * System.loadLibrary (the classloader-namespace lookup over
+     * nativeLibraryDir) — extraction/classifier jars do not apply.
+     * Detection is pure java.* (no android.* import): the shared sources
+     * compile for the desktop JVM unchanged. Modern ART reports
+     * "Dalvik" as java.vm.name for compatibility; "ART" covers the rest.
+     */
+    val onAndroid: Boolean = run {
+        val vm = System.getProperty("java.vm.name")?.lowercase() ?: ""
+        vm.contains("dalvik") || vm.contains("art")
+    }
+
     /** Recognizable names on ANY platform — directory scans are permissive
      *  (the dev dirs hold whatever the host compiled), the classpath lookup
      *  is not (foreign classifier jars must not load). */

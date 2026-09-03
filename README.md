@@ -53,9 +53,24 @@ The version rides the engine's release cascade (engine tag `vX.Y.Z` →
 binding `X.Y.Z`): a tag-driven workflow assembles, GPG-signs, and
 publishes — the one-time setup is done and `0.4.0` is **live on Maven
 Central** (how it works:
-[docs/maven-central-setup.md](docs/maven-central-setup.md)). A first
-Android consumer request triggers the AAR packaging follow-up ruled in
-[docs/PLAN.md](docs/PLAN.md); the API does not change for it.
+[docs/maven-central-setup.md](docs/maven-central-setup.md)).
+
+**Android:** the same wrapper ships as an AAR —
+`io.github.corvid-db:corvid-android` (published in the same release
+bundle, same version). ONE dependency, no classifier: the AAR carries
+the Kotlin classes plus `arm64-v8a` and `x86_64` `jniLibs` pairs
+(engine cdylib + JNI shim), `Corvid.load()` resolves them through
+Android's `nativeLibraryDir` automatically, and `minSdk` is 26:
+
+```kotlin
+dependencies {
+    implementation("io.github.corvid-db:corvid-android:0.4.1")
+}
+```
+
+The API is identical to the JVM artifact (the SAME Kotlin sources,
+compiled against `android.jar`); the architecture + device-gate notes
+are [docs/PLAN.md](docs/PLAN.md)'s Android section.
 
 ## The architecture ruling: Kotlin/JVM via JNI, release artifacts only
 

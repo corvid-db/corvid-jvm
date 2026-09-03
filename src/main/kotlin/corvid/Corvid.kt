@@ -51,6 +51,17 @@ object Corvid {
         }
 
     private fun loadOnce() {
+        // 0. Android (the corvid-android AAR): the pair ships as jniLibs
+        // (arm64-v8a / x86_64) inside the AAR, installed by the package
+        // manager into the app's nativeLibraryDir — System.loadLibrary is
+        // the classloader-namespace lookup that finds them there. Engine
+        // first, same order as everywhere else. A miss (pair absent)
+        // falls through to the desktop paths so a desktop JVM that merely
+        // looks Android-like is never stranded.
+        if (NativeLoading.onAndroid && androidJniLibs()) {
+            verifyFfiVersion()
+            return
+        }
         val jni = findNativeLibrary()
             ?: throw IllegalStateException(
                 "corvid: cannot locate the JNI shim (${corvid.jni.NativeLoading.shimName}). " +
@@ -69,6 +80,19 @@ object Corvid {
             System.load(engine.absolutePath)
         }
         System.load(jni.absolutePath)
+        verifyFfiVersion()
+    }
+
+    /** The jniLibs pair from the corvid-android AAR, or false when absent. */
+    private fun androidJniLibs(): Boolean = try {
+        System.loadLibrary("corvid")
+        System.loadLibrary("corvidjni")
+        true
+    } catch (e: UnsatisfiedLinkError) {
+        false
+    }
+
+    private fun verifyFfiVersion() {
         val v = corvid.jni.Natives.nFfiVersion()
         check(v == EXPECTED_FFI_VERSION) {
             "corvid: FFI version mismatch — libcorvid reports $v, this binding " +

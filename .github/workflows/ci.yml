@@ -79,3 +79,33 @@ jobs:
 
       - name: Resolve docs/SURFACE.tsv against the pinned engine surface
         run: ./scripts/surface-gate.sh
+
+  android:
+    # The corvid-android AAR leg: fetch the pinned engine release's
+    # ANDROID artifact sets (sha256 + golden byte-compare, the same
+    # discipline fetch.sh applies to the desktop sets), compile the JNI
+    # shim for both ABIs with the NDK, then the android Gradle build's
+    # own gate — the AAR structure test (both ABI pairs + classes inside
+    # the assembled AAR). The desktop matrix above already runs the
+    # golden suite against the SHARED Kotlin sources (same srcDir); the
+    # on-device instrumented smoke (androidTest + the ATD emulator
+    # recipe in PLAN.md) is the documented local device gate, not a CI
+    # leg — emulator legs are flake factories, and the wrapper logic is
+    # platform-independent above the loader branch.
+    name: android (NDK, AAR structure gate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: android-actions/setup-android@v3
+      - name: Android SDK bits (platform + build tools)
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" >/dev/null
+      - name: Install the NDK (r28b — matches the engine's android cdylibs)
+        run: |
+          curl -fsSL -o /tmp/ndk.zip https://dl.google.com/android/repository/android-ndk-r28b-linux.zip
+          unzip -q /tmp/ndk.zip -d "$RUNNER_TEMP"
+          echo "ANDROID_NDK_HOME=$RUNNER_TEMP/android-ndk-r28b" >> "$GITHUB_ENV"
+      - name: Fetch engine android sets + compile the JNI shim (both ABIs)
+        run: scripts/build-native-android.sh
+      - name: AAR assemble + structure gate
+        run: ./gradlew -p android test --console=plain --no-daemon
