@@ -100,6 +100,32 @@ jobs:
             echo "::warning::Central Portal credentials are not configured — the publish will be skipped (workflow stays green). See docs/maven-central-setup.md for the one-time setup (repo secrets: CENTRAL_PORTAL_TOKEN_NAME, CENTRAL_PORTAL_TOKEN, ORG_GRADLE_PROJECT_signingKey, ORG_GRADLE_PROJECT_signingPassword)."
           fi
 
+      # A mangled signing-key paste is the #1 Central-publish failure (the
+      # 2026-09-03 first run: 'Could not read PGP secret key' AFTER the
+      # five-leg matrix). Validate the secret's SHAPE here — in seconds,
+      # with a diagnosis — never its content. Checks only structure a
+      # parse needs: the exact BEGIN/END armor lines, no literal "\n"
+      # sequences, armor body lines ≤ 64 chars of base64 charset, no CR.
+      - name: Diagnose the signing-key secret's shape
+        if: steps.check.outputs.configured == 'true'
+        env:
+          SIGNING_KEY: ${{ secrets.ORG_GRADLE_PROJECT_signingKey }}
+        run: |
+          fail_shape() { echo "::error::$1 Re-save the ORG_GRADLE_PROJECT_signingKey secret: the value must be the COMPLETE armored block, from the -----BEGIN line through the -----END line, with real line breaks (one paste, no editor re-wrapping). See docs/maven-central-setup.md §4."; exit 1; }
+          LINES=$(printf '%s' "$SIGNING_KEY" | wc -l | tr -d ' ')
+          FIRST=$(printf '%s' "$SIGNING_KEY" | head -1)
+          LAST=$(printf '%s' "$SIGNING_KEY" | tail -1)
+          [ "$FIRST" = "-----BEGIN PGP PRIVATE KEY BLOCK-----" ] || fail_shape "Signing key does not START with the armor BEGIN line (first line length ${#FIRST}, expected exactly '-----BEGIN PGP PRIVATE KEY BLOCK-----'). A PUBLIC key or a truncated/wrapped paste fails here."
+          [ "$LAST" = "-----END PGP PRIVATE KEY BLOCK-----" ] || fail_shape "Signing key does not END with the armor END line (last line length ${#LAST}) — the block was truncated or a trailing character rode along."
+          if printf '%s' "$SIGNING_KEY" | grep -q $'\r'; then fail_shape "Signing key contains CR characters (pasted through a CRLF path)."; fi
+          if printf '%s' "$SIGNING_KEY" | grep -q '\\n'; then fail_shape "Signing key contains literal backslash-n sequences — the newlines were escaped somewhere in the copy path."; fi
+          # Armor body: blank separator lines and the '='-prefixed checksum
+          # line are part of the format; every other line must be at most
+          # 64 base64 chars.
+          BAD=$(printf '%s' "$SIGNING_KEY" | tail -n +2 | head -n -1 | grep -vE '^=|^$' | grep -nE '.{65,}|[^A-Za-z0-9+/=]' | head -3 | cut -d: -f1 | tr '\n' ' ')
+          [ -z "$BAD" ] || fail_shape "Armor body has malformed line(s) at body-relative line number(s) $BAD (armor data lines are at most 64 chars of base64) — the paste was re-wrapped or otherwise altered."
+          echo "signing-key shape OK ($LINES lines)"
+
   natives:
     name: natives (${{ matrix.classifier }})
     # Behind the gate: a tag that misses either engine pin fails in
