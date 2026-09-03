@@ -299,6 +299,13 @@ jobs:
           -Pversion="${GITHUB_REF_NAME#v}"
           --console=plain --no-daemon
 
+      # Gradle's maven staging repo writes maven-metadata.xml (+checksums)
+      # at the artifact level; Central rejects content at the no-version
+      # level without a POM (run 33735091989's validation error) and
+      # generates its own metadata — drop Gradle's before uploading.
+      - name: Strip Gradle's maven-metadata from the staging tree
+        run: find build/staging -name 'maven-metadata.xml*' -delete
+
       - name: Upload the bundle to the Central Portal
         uses: spring-io/central-publish-action@v0.4.0
         with:
