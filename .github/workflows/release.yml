@@ -16,7 +16,10 @@
 #                 CORVID_VERSION and fetch.ps1's $CorvidVersion — a
 #                 drifted pin would otherwise publish a classifier jar
 #                 carrying the wrong cdylib under the tag, immutable on
-#                 Central), and the credentials check (publishing needs
+#                 Central) plus the README's Installing <version>
+#                 literal (bare, copy-pasteable coordinates the
+#                 pin-bump automation cannot rewrite), and the
+#                 credentials check (publishing needs
 #                 a portal user token + GPG key; Central Portal has NO
 #                 OIDC/trusted publishing — secrets are irreducible,
 #                 see docs/maven-central-setup.md). A bad tag is a red
@@ -61,7 +64,7 @@ jobs:
         run: |
           TAG="${GITHUB_REF_NAME}"
           fail() {
-            echo "::error::$1 The binding publishes on the engine's release cascade: bump the pin in fetch.sh AND fetch.ps1 (CORVID_VERSION / \$CorvidVersion) first, then tag the same version." >&2
+            echo "::error::$1 The binding publishes on the engine's release cascade: bump the pin in fetch.sh AND fetch.ps1 (CORVID_VERSION / \$CorvidVersion) and the README's Installing coordinates first, then tag the same version." >&2
             exit 1
           }
           PIN_SH="$(grep -oE '^CORVID_VERSION="v[^"]+"' fetch.sh | head -1 | cut -d'"' -f2)"
@@ -70,7 +73,16 @@ jobs:
           PIN_PS1="$(grep -oE '^\$CorvidVersion = "v[^"]+"' fetch.ps1 | head -1 | cut -d'"' -f2)"
           [ -n "$PIN_PS1" ] || fail "cannot read \$CorvidVersion from fetch.ps1."
           [ "$TAG" = "$PIN_PS1" ] || fail "tag $TAG does not match the engine pin $PIN_PS1 in fetch.ps1."
-          echo "tag $TAG == engine pins (fetch.sh $PIN_SH, fetch.ps1 $PIN_PS1)"
+          # README's Installing coordinates are bare X.Y.Z literals —
+          # deliberately copy-pasteable, so the engine-bump automation
+          # (which rewrites only v-prefixed pins) can never maintain
+          # them. Guard the FIRST <version>X.Y.Z</version> literal
+          # against the tag's bare version instead of de-literalizing.
+          BARE="${TAG#v}"
+          PIN_DOC="$(grep -oE '<version>[0-9]+\.[0-9]+\.[0-9]+</version>' README.md | head -1 | cut -d'>' -f2 | cut -d'<' -f1)"
+          [ -n "$PIN_DOC" ] || fail "cannot read a <version>X.Y.Z</version> literal from README.md."
+          [ "$BARE" = "$PIN_DOC" ] || fail "README.md's Installing coordinates still show $PIN_DOC but the tag is $TAG."
+          echo "tag $TAG == engine pins (fetch.sh $PIN_SH, fetch.ps1 $PIN_PS1) and README Installing version ($PIN_DOC)"
 
       - name: Check the four repo secrets exist
         id: check
