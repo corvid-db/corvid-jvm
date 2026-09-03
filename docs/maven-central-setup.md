@@ -96,7 +96,13 @@ The binding version rides the engine's **release cascade**: engine tag
    `$CorvidVersion` in `fetch.ps1`, **and** the `<version>` coordinates
    in README.md's Installing section) and merge — the normal pin-bump
    PRs (#2–#5) are the template. The release gate verifies all three
-   against the tag and fails loudly naming whichever lags.
+   against the tag and fails loudly naming whichever lags. The cascade
+   tooling (`scripts/bindings/bump.sh` in the engine repo) rewrites
+   all three automatically — including the bare README coordinates
+   (Maven `<version>` literals and Gradle `:X.Y.Z` tails) — so the
+   standard `bump.sh vX.Y.Z → --merge-when-green →
+   --release-after-merge` flow publishes corvid-jvm with zero manual
+   steps.
 2. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z` (the tag
    must **equal** the pin; the workflow verifies this and fails with an
    explanation otherwise). `-Pversion` is derived from the tag, which
@@ -107,11 +113,11 @@ The binding version rides the engine's **release cascade**: engine tag
    downloads all five pairs, Gradle assembles + signs the bundle into
    `build/staging`, and `spring-io/central-publish-action` uploads it
    as a deployment.
-4. The upload uses `publishing-type: user_managed`: Central validates
-   the bundle (checksums, signatures, POM, javadoc/sources presence)
-   and holds it as a **release you confirm in the portal UI**
-   (Publishing → Releases). Flip that input to `automatic` in the
-   workflow if you'd rather skip the confirmation step.
+4. The upload uses `publishing-type: automatic`: Central validates the
+   bundle (checksums, signatures, POM, javadoc/sources presence) and
+   publishes it — no portal click needed. (The first release used
+   `user_managed` for a human-confirmed publish; flip the workflow
+   input back if you want that gate again.)
 5. After release, the artifacts serve from
    `repo.maven.apache.org` within ~10–30 minutes; the search index
    lags a bit longer.

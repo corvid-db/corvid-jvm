@@ -197,10 +197,11 @@ legs fetch (sha256-verified) + compile the C-only JNI shim (macos-x64
 and linux-arm64 as compile-only cross builds), the publish job
 assembles + GPG-signs the Gradle maven-publish bundle and uploads it
 to the Central Portal via `spring-io/central-publish-action`
-(`user_managed` — you confirm the release in the portal UI). Until the
-one-time credentials exist
-([docs/maven-central-setup.md](docs/maven-central-setup.md)), the
-publish leg skips with a loud green notice instead of failing.
+(`automatic` — Central publishes itself after validation; no portal
+click). The one-time credentials are configured
+([docs/maven-central-setup.md](docs/maven-central-setup.md)); were
+they missing, the publish leg would skip with a loud green notice
+instead of failing.
 
 ## License
 

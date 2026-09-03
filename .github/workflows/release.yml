@@ -33,8 +33,9 @@
 #   publish     — downloads all five pairs into build/natives/, Gradle
 #                 assembles + signs the bundle into build/staging, the
 #                 spring-io/central-publish-action uploads it
-#                 (publishing-type user_managed: you release from the
-#                 portal UI after Central's validation passes).
+#                 (publishing-type automatic: Central publishes after
+#                 its validation passes — no portal click; flip to
+#                 user_managed if a human should confirm each release).
 #   publish-skipped — the loud notice when credentials are missing.
 
 name: release
@@ -312,7 +313,7 @@ jobs:
           token-name: ${{ secrets.CENTRAL_PORTAL_TOKEN_NAME }}
           token: ${{ secrets.CENTRAL_PORTAL_TOKEN }}
           dir: build/staging
-          publishing-type: user_managed
+          publishing-type: automatic
           deployment-name: corvid-jvm-${{ github.ref_name }}
           # Gradle's maven-publish staging already carries .md5/.sha1
           # (and Central's sha256/512); the action's default FAILS on
