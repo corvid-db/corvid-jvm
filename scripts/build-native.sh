@@ -41,10 +41,30 @@ case "$OS" in
     *) echo "build-native: unsupported OS $OS (use build-native.ps1 on Windows)" >&2; exit 1 ;;
 esac
 
+# ---- cross-compile overrides (release workflow) ---------------------------
+#   CC=<cc>            compiler to use (e.g. CC=aarch64-linux-gnu-gcc for the
+#                      linux-arm64 leg on an x64 runner; jni.h + include/linux
+#                      are arch-independent headers);
+#   CORVID_ARCH=<a>    macOS only: cc -arch <a> (x86_64 shim on the arm64
+#                      runner, or vice versa). Pair with
+#                      CORVID_TARGET=<target> ./fetch.sh so the shim links
+#                      the matching cdylib. Cross targets are compile-only —
+#                      they are never loaded on the building host.
+CC="${CC:-cc}"
+ARCH_FLAGS=""
+if [ -n "${CORVID_ARCH:-}" ]; then
+    if [ "$OS" != "Darwin" ]; then
+        echo "build-native: CORVID_ARCH is macOS-only (use CC=<cross-gcc> on Linux)" >&2
+        exit 1
+    fi
+    ARCH_FLAGS="-arch $CORVID_ARCH"
+fi
+
 mkdir -p build/native
 echo "build-native: compiling native/corvid_jni.c -> build/native/$OUT"
 # shellcheck disable=SC2086
-cc -O2 -fPIC -shared -Wall -Wextra \
+$CC -O2 -fPIC -shared -Wall -Wextra \
+    $ARCH_FLAGS \
     $JNI_INC $PLAT_INC -Ideps/current \
     native/corvid_jni.c \
     "deps/current/$LIB" \

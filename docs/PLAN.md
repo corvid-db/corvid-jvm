@@ -68,13 +68,45 @@ Consequences, all locked:
 
 ### Follow-up (deliberately out of scope for this bootstrap)
 
-**Android AAR bundling.** The artifact today is a JVM library plus a
-per-platform JNI shim the consumer builds (or, post-publish, downloads).
-An Android AAR that pre-bundles the `.so` files for `arm64-v8a`/
-`x86_64` behind the same Kotlin API is a packaging change only — no API
-or lifetime semantics move. Trigger: a first Android consumer request,
-or the Maven Central publish (whichever comes first). Tracked here so
+**Android AAR bundling.** The artifact today is a JVM library whose
+per-platform classifier jars bundle the JNI shim + engine cdylib (the
+"published artifact shape" below). An Android AAR that pre-bundles the
+`.so` files for `arm64-v8a`/`x86_64` behind the same Kotlin API is a
+packaging change only — no API or lifetime semantics move. Trigger
+(re-ruled 2026, regressed to the original): **a first Android consumer
+request** — the Maven Central publish no longer triggers it, because
+the engine publishes NO android cdylib artifacts (verified against the
+engine release matrix: apple x64/arm64, linux-gnu x64/arm64, windows
+x64 — nothing for `linux-android`/`android` targets), so an AAR would
+have nothing to bundle until the engine ships them. Tracked here so
 the decision is not re-litigated.
+
+### Published artifact shape (the publish-prep ruling)
+
+`io.github.corvid-db:corvid-jvm:X.Y.Z` on Maven Central via the Central
+Portal, tag-driven (`release.yml`; the user-side checklist is
+docs/maven-central-setup.md):
+
+- ONE empty-of-natives main jar (the classes), a sources jar, and a
+  javadoc jar (placeholder — the contract docs are the docs site +
+  this file; no doc-generator dependency enters the build).
+- ONE classifier jar per platform — `macos-arm64`, `macos-x64`,
+  `linux-x64`, `linux-arm64`, `windows-x64`, exactly the engine's
+  cdylib matrix — bundling BOTH the compiled JNI shim AND the fetched
+  engine cdylib at the jar root. The loader
+  (`corvid.jni.NativeLoading`, behind `Corvid.load()`) extracts the
+  pair for THIS platform from the classpath into a temp dir and
+  `System.load()`s them by absolute path (engine first, then the shim
+  — same resolution discipline as the dev path), with the
+  `java.library.path` fallback retained last for dev builds. A
+  consumer needs nothing but the dependency.
+- The version rides the engine's release cascade: engine tag `vX.Y.Z`
+  → binding `X.Y.Z`; the Gradle version derives from fetch.sh's pin,
+  and the release workflow hard-fails a tag that doesn't match the pin.
+- Cross-compiled classifier jars (macos-x64 via `cc -arch`, linux-arm64
+  via the distro cross-gcc) are **compile-only**: their pairs are
+  never loaded on the building host; the loaded-native proof stays in
+  ci.yml's native runner matrix.
 
 ## The locked rule: golden port BEFORE ergonomic sugar
 
@@ -311,9 +343,11 @@ Modern minimums, CI rides current lines:
    exercised.
 
 Out of scope for JVM1: coroutine wrappers, Android AAR (documented
-follow-up above), Maven Central publish (prepared posture only —
-publish rides the engine's release cadence like the other non-npm/PyPI
-bindings until the maintainer pulls the trigger).
+follow-up above). The Maven Central publish started as JVM1's
+"prepared posture only" and was since built out (the "Published
+artifact shape" ruling above): the tag-driven pipeline is complete and
+dormant until the maintainer's one-time Central Portal credentials
+exist — docs/maven-central-setup.md is that checklist.
 
 ## Verdict protocol
 

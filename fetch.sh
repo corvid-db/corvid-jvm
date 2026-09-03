@@ -26,15 +26,21 @@ ROOT="$(pwd)"
 DL="$ROOT/deps/dl"
 
 # ---- host platform → release target ------------------------------------
+# The release workflow (cross-compile legs) overrides the host detection
+# with CORVID_TARGET=<target> to fetch a FOREIGN platform's pair — the
+# cross-compiled JNI shim must link the matching cdylib.
 OS="$(uname -s)"
 ARCH="$(uname -m)"
-case "$OS:$ARCH" in
-    Darwin:arm64)  TARGET="aarch64-apple-darwin" ;;
-    Darwin:x86_64) TARGET="x86_64-apple-darwin" ;;
-    Linux:aarch64) TARGET="aarch64-unknown-linux-gnu" ;;
-    Linux:x86_64)  TARGET="x86_64-unknown-linux-gnu" ;;
-    *) echo "fetch.sh: unsupported host $OS/$ARCH (use fetch.ps1 on Windows)" >&2; exit 1 ;;
-esac
+TARGET="${CORVID_TARGET:-}"
+if [ -z "$TARGET" ]; then
+    case "$OS:$ARCH" in
+        Darwin:arm64)  TARGET="aarch64-apple-darwin" ;;
+        Darwin:x86_64) TARGET="x86_64-apple-darwin" ;;
+        Linux:aarch64) TARGET="aarch64-unknown-linux-gnu" ;;
+        Linux:x86_64)  TARGET="x86_64-unknown-linux-gnu" ;;
+        *) echo "fetch.sh: unsupported host $OS/$ARCH (use fetch.ps1 on Windows)" >&2; exit 1 ;;
+    esac
+fi
 
 ARCHIVE="corvid-ffi-${CORVID_VERSION}-${TARGET}.tar.gz"
 BASE_URL="https://github.com/${REPO}/releases/download/${CORVID_VERSION}"

@@ -4,18 +4,29 @@
 // finalizers, no magic): the engine cdylib is System.load()ed from an
 // absolute path FIRST, then the JNI shim, so the shim's link against
 // libcorvid resolves from the already-loaded module on every platform
-// (no PATH / java.library.path games). Search order for the directory:
+// (no PATH / java.library.path games). Search order for the pair
+// (mechanics in corvid.jni.NativeLoading):
 //
 //   1. the corvid.native.dir system property
 //   2. the CORVID_NATIVE_DIR environment variable
-//   3. well-known local build/fetch outputs: build/native, deps/current
+//   3. the classpath — the published per-platform CLASSIFIER jars
+//      (io.github.corvid-db:corvid-jvm:<v>:<classifier>) bundle the
+//      shim + engine cdylib at the jar root; both are extracted to a
+//      temp dir and loaded from absolute paths (the consumer path: the
+//      dependency is the only requirement)
+//   4. well-known local build/fetch outputs: build/native, deps/current
+//      (a dev checkout: ./fetch.sh + scripts/build-native.sh)
+//   5. the classic java.library.path lookup, last (dev builds that put
+//      the pair on the library path)
 //
-// CI and Gradle set (1); a consumer embedding corvid-jvm sets (1) or
-// (2), or drops the two libraries on java.library.path (the loader
-// falls back to System.loadLibrary("corvidjni") last).
+// CI and Gradle set (1); a consumer sets nothing (3 does it); a dev
+// working in this repo gets (4) for free.
 package corvid
 
+import corvid.jni.NativeLoading
 import java.io.File
+import java.io.IOException
+import java.util.UUID
 
 object Corvid {
 
@@ -42,14 +53,18 @@ object Corvid {
     private fun loadOnce() {
         val jni = findNativeLibrary()
             ?: throw IllegalStateException(
-                "corvid: cannot locate the JNI shim (libcorvidjni.dylib / " +
-                    "libcorvidjni.so / corvidjni.dll). Set -Dcorvid.native.dir=<dir> " +
-                    "or CORVID_NATIVE_DIR, or run scripts/build-native.sh after ./fetch.sh.",
+                "corvid: cannot locate the JNI shim (${corvid.jni.NativeLoading.shimName}). " +
+                    "Add this platform's classifier jar to the runtime classpath " +
+                    "(io.github.corvid-db:corvid-jvm:<version>:" +
+                    "${corvid.jni.NativeLoading.classifier ?: "<platform>"})" +
+                    ", or set -Dcorvid.native.dir=<dir> or CORVID_NATIVE_DIR, or run " +
+                    "scripts/build-native.sh after ./fetch.sh.",
             )
-        // The engine cdylib sits beside the shim (build scripts put it
-        // there); loading it first makes the shim's unresolved link
-        // resolve from the loaded module on all platforms.
-        val engine = engineLibBeside(jni.parentFile)
+        // The engine cdylib sits beside the shim (build scripts and the
+        // classifier jars always pair them); loading it first makes the
+        // shim's unresolved link resolve from the loaded module on all
+        // platforms.
+        val engine = NativeLoading.engineBeside(jni)
         if (engine != null) {
             System.load(engine.absolutePath)
         }
@@ -62,19 +77,20 @@ object Corvid {
     }
 
     private fun findNativeLibrary(): File? {
-        val names = listOf("libcorvidjni.dylib", "libcorvidjni.so", "corvidjni.dll")
-        val dirs = mutableListOf<String>()
-        System.getProperty("corvid.native.dir")?.let { dirs.add(it) }
-        System.getenv("CORVID_NATIVE_DIR")?.let { dirs.add(it) }
-        dirs.add("build/native")
-        dirs.add("deps/current")
-        for (d in dirs) {
-            for (n in names) {
-                val f = File(d, n)
-                if (f.isFile) return f
-            }
+        // 1/2. explicit overrides (CI, Gradle, an embedding consumer).
+        val explicit = buildList {
+            System.getProperty("corvid.native.dir")?.let { add(it) }
+            System.getenv("CORVID_NATIVE_DIR")?.let { add(it) }
         }
-        // Last resort: the classic java.library.path lookup.
+        NativeLoading.findInDirs(explicit)?.let { return it }
+
+        // 3. the published classifier jars on the classpath.
+        fromClasspath()?.let { return it }
+
+        // 4. a dev checkout's own build/fetch outputs.
+        NativeLoading.findInDirs(listOf("build/native", "deps/current"))?.let { return it }
+
+        // 5. last resort: the classic java.library.path lookup.
         return try {
             System.loadLibrary("corvidjni")
             File("corvidjni") // loaded already; marker, unused
@@ -83,12 +99,43 @@ object Corvid {
         }
     }
 
-    private fun engineLibBeside(dir: File): File? {
-        val names = listOf("libcorvid.dylib", "libcorvid.so", "corvid.dll")
-        for (n in names) {
-            val f = File(dir, n)
-            if (f.isFile) return f
+    /**
+     * The classpath pair, extracted into a temp dir that is REUSED
+     * across JVM runs when it is verifiably this user's own
+     * (NativeLoading.reusableNativeDir — a hostile local user must not
+     * be able to pre-place or swap a library we will System.load(); a
+     * reused file of the same size is left untouched, so the common
+     * case writes nothing). A contended shared dir (e.g. Windows holds
+     * the previously loaded file locked while a different version must
+     * land) falls back to a private per-process dir.
+     */
+    private fun fromClasspath(): File? {
+        val loader = Thread.currentThread().contextClassLoader
+            ?: Corvid::class.java.classLoader
+        val tmp = NativeLoading.reusableNativeDir("corvid-jvm-native")
+        try {
+            return NativeLoading.extractFromClasspath(tmp, loader)
+        } catch (first: IOException) {
+            val priv = File(
+                System.getProperty("java.io.tmpdir"),
+                "corvid-jvm-native-${UUID.randomUUID()}",
+            )
+            if (!priv.isDirectory && !priv.mkdirs() && !priv.isDirectory) {
+                throw IllegalStateException(
+                    "corvid: found the classifier jar's natives on the classpath but " +
+                        "could not create an extraction dir (${priv.absolutePath})",
+                    first,
+                )
+            }
+            try {
+                return NativeLoading.extractFromClasspath(priv, loader)
+            } catch (second: IOException) {
+                throw IllegalStateException(
+                    "corvid: found the classifier jar's natives on the classpath but " +
+                        "could not extract them into ${priv.absolutePath}",
+                    second,
+                )
+            }
         }
-        return null
     }
 }

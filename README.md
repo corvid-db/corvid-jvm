@@ -20,10 +20,42 @@ documents every symbol this binding links (handles, ownership, errors,
 threading), and [docs/PLAN.md](docs/PLAN.md) records this binding's
 architecture ruling, the JNI discipline, and the lifetime mapping.
 
-**Installing:** Maven-Central-pending — consume from source (below)
-until the publish rides an engine release cadence. A first Android
-consumer request (or the publish) triggers the AAR packaging follow-up
-ruled in [docs/PLAN.md](docs/PLAN.md); the API does not change for it.
+**Installing:** Maven Central, self-contained jars — the coordinate
+plus ONE platform classifier (the classifier jar bundles the JNI shim
+AND the engine cdylib; the loader extracts both to a temp dir and
+`System.load()`s them, so a consumer needs nothing else — no fetch, no
+compiler, no `java.library.path`):
+
+```kotlin
+dependencies {
+    implementation("io.github.corvid-db:corvid-jvm:0.4.0")
+    runtimeOnly("io.github.corvid-db:corvid-jvm:0.4.0:macos-arm64")
+    // classifiers: macos-arm64 | macos-x64 | linux-x64 | linux-arm64 | windows-x64
+}
+```
+
+```xml
+<dependency>
+    <groupId>io.github.corvid-db</groupId>
+    <artifactId>corvid-jvm</artifactId>
+    <version>0.4.0</version>
+</dependency>
+<dependency>
+    <groupId>io.github.corvid-db</groupId>
+    <artifactId>corvid-jvm</artifactId>
+    <version>0.4.0</version>
+    <classifier>macos-arm64</classifier>
+    <scope>runtime</scope>
+</dependency>
+```
+
+The version rides the engine's release cascade (engine tag `vX.Y.Z` →
+binding `X.Y.Z`; a tag-driven workflow publishes — see
+[docs/maven-central-setup.md](docs/maven-central-setup.md) for the
+one-time credentials checklist). Until those credentials exist the
+pipeline is ready but dormant: consume from source (below). A first
+Android consumer request triggers the AAR packaging follow-up ruled in
+[docs/PLAN.md](docs/PLAN.md); the API does not change for it.
 
 ## The architecture ruling: Kotlin/JVM via JNI, release artifacts only
 
@@ -153,6 +185,22 @@ user's bug report.
 The engine pin lives in one variable in the fetch scripts
 (`CORVID_VERSION=v0.4.0`). Artifacts always come from that exact tag's
 GitHub release and are sha256-verified; `deps/` is never committed.
+The published version rides the engine's release cascade — engine tag
+`vX.Y.Z` → `io.github.corvid-db:corvid-jvm:X.Y.Z` (the Gradle version
+is derived from the pin; the release workflow double-checks the pushed
+tag equals the pin and publishes from the tag).
+
+## Publishing
+
+`v*` tag pushes trigger `.github/workflows/release.yml`: five platform
+legs fetch (sha256-verified) + compile the C-only JNI shim (macos-x64
+and linux-arm64 as compile-only cross builds), the publish job
+assembles + GPG-signs the Gradle maven-publish bundle and uploads it
+to the Central Portal via `spring-io/central-publish-action`
+(`user_managed` — you confirm the release in the portal UI). Until the
+one-time credentials exist
+([docs/maven-central-setup.md](docs/maven-central-setup.md)), the
+publish leg skips with a loud green notice instead of failing.
 
 ## License
 

@@ -1,0 +1,270 @@
+# release — tag-driven Maven Central publish (Central Portal).
+#
+# Trigger: push of a tag vX.Y.Z. The binding version rides the engine's
+# release cascade: the tag MUST equal fetch.sh's CORVID_VERSION pin
+# (checked below — a mismatch is a hard, explained failure), and the
+# published version is the tag without the "v".
+#
+# Artifact shape (the locked ruling): empty-of-natives main jar +
+# sources + javadoc + one classifier jar per platform bundling the JNI
+# shim AND the fetched engine cdylib. The engine publishes cdylibs for
+# exactly the five targets below (NOT android).
+#
+# Legs:
+#   natives     — one matrix leg per platform: fetch (sha256-verified,
+#                 CORVID_TARGET override for foreign pairs) + compile the
+#                 C-only shim (native runners; macos x64 via cc -arch,
+#                 linux arm64 via gcc-aarch64-linux-gnu — compile-only,
+#                 never loaded on the building host) + upload the pair.
+#   credentials — the secrets gate: publishing needs a portal user token
+#                 + GPG key (Central Portal has NO OIDC/trusted
+#                 publishing — secrets are irreducible; see
+#                 docs/maven-central-setup.md). Unconfigured = the
+#                 publish jobs SKIP with a loud, green explanation
+#                 instead of a red X.
+#   publish     — downloads all five pairs into build/natives/, Gradle
+#                 assembles + signs the bundle into build/staging, the
+#                 spring-io/central-publish-action uploads it
+#                 (publishing-type user_managed: you release from the
+#                 portal UI after Central's validation passes).
+#   publish-skipped — the loud notice when credentials are missing.
+
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  credentials:
+    name: Central Portal credentials gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      - name: Check the four repo secrets exist
+        id: check
+        env:
+          HAS_TOKEN_NAME: ${{ secrets.CENTRAL_PORTAL_TOKEN_NAME != '' }}
+          HAS_TOKEN: ${{ secrets.CENTRAL_PORTAL_TOKEN != '' }}
+          HAS_SIGNING_KEY: ${{ secrets.ORG_GRADLE_PROJECT_signingKey != '' }}
+          HAS_SIGNING_PASSWORD: ${{ secrets.ORG_GRADLE_PROJECT_signingPassword != '' }}
+        run: |
+          if [[ "$HAS_TOKEN_NAME" == true && "$HAS_TOKEN" == true && \
+                "$HAS_SIGNING_KEY" == true && "$HAS_SIGNING_PASSWORD" == true ]]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Central Portal credentials are not configured — the publish will be skipped (workflow stays green). See docs/maven-central-setup.md for the one-time setup (repo secrets: CENTRAL_PORTAL_TOKEN_NAME, CENTRAL_PORTAL_TOKEN, ORG_GRADLE_PROJECT_signingKey, ORG_GRADLE_PROJECT_signingPassword)."
+          fi
+
+  natives:
+    name: natives (${{ matrix.classifier }})
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - classifier: macos-arm64
+            runs-on: macos-latest
+            target: aarch64-apple-darwin
+            arch: ''           # host arch of the runner
+          - classifier: macos-x64
+            runs-on: macos-latest
+            target: x86_64-apple-darwin
+            arch: x86_64       # cc -arch cross-compile (compile-only)
+          - classifier: linux-x64
+            runs-on: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            arch: ''
+          - classifier: linux-arm64
+            runs-on: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            arch: cross        # gcc-aarch64-linux-gnu (compile-only)
+          - classifier: windows-x64
+            runs-on: windows-latest
+            target: ''          # fetch.ps1 handles the host
+            arch: ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # ---- fetch the pair for THIS leg's target (sha256 + golden
+      # byte-compare against the release, per fetch.sh) --------------------
+      - name: Fetch + verify engine artifacts (sha256)
+        if: runner.os != 'Windows'
+        env:
+          CORVID_TARGET: ${{ matrix.target }}
+        run: ./fetch.sh
+
+      - name: Fetch + verify engine artifacts (sha256, Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./fetch.ps1
+
+      # ---- compile the C-only shim --------------------------------------
+      # Native runners compile natively; the macos x64 leg cross-compiles
+      # with cc -arch (fetch.sh's CORVID_TARGET fetched the x64 cdylib);
+      # the linux arm64 leg cross-compiles with the distro's aarch64
+      # gcc. Cross targets are COMPILE-ONLY: the pair is never loaded on
+      # the building host (the CI workflow's native matrix is what runs
+      # the golden suite against loaded natives).
+      - name: Cross-compiler (linux arm64)
+        if: matrix.arch == 'cross'
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build the JNI shim
+        if: runner.os == 'macOS' && matrix.arch == ''
+        run: ./scripts/build-native.sh
+
+      - name: Build the JNI shim (macos cross-arch)
+        if: runner.os == 'macOS' && matrix.arch != ''
+        env:
+          CORVID_ARCH: ${{ matrix.arch }}
+        run: ./scripts/build-native.sh
+
+      - name: Build the JNI shim (linux host)
+        if: runner.os == 'Linux' && matrix.arch == ''
+        run: ./scripts/build-native.sh
+
+      - name: Build the JNI shim (linux cross-arch)
+        if: runner.os == 'Linux' && matrix.arch == 'cross'
+        env:
+          CC: aarch64-linux-gnu-gcc
+        run: ./scripts/build-native.sh
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+
+      - name: Build the JNI shim (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/build-native.ps1
+
+      - name: Stage the pair under build/natives/${{ matrix.classifier }}
+        shell: bash
+        run: |
+          mkdir -p "build/natives/${{ matrix.classifier }}"
+          cp build/native/* "build/natives/${{ matrix.classifier }}/"
+          ls -l "build/natives/${{ matrix.classifier }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: natives-${{ matrix.classifier }}
+          path: build/natives/${{ matrix.classifier }}
+          if-no-files-found: error
+
+  publish:
+    name: Assemble, sign, publish to Central Portal
+    needs: [credentials, natives]
+    if: needs.credentials.outputs.configured == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      ORG_GRADLE_PROJECT_signingKey: ${{ secrets.ORG_GRADLE_PROJECT_signingKey }}
+      ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.ORG_GRADLE_PROJECT_signingPassword }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Verify the tag matches the engine pin (release cascade)
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          PIN="$(grep -oE '^CORVID_VERSION="v[^"]+"' fetch.sh | head -1 | cut -d'"' -f2)"
+          if [ "$TAG" != "$PIN" ]; then
+            echo "::error::tag $TAG does not match the engine pin $PIN in fetch.sh. The binding publishes on the engine's release cascade: bump CORVID_VERSION (fetch.sh + fetch.ps1) first, then tag the same version." >&2
+            exit 1
+          fi
+          echo "tag $TAG == engine pin $PIN"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: natives-macos-arm64
+          path: build/natives/macos-arm64
+      - uses: actions/download-artifact@v4
+        with:
+          name: natives-macos-x64
+          path: build/natives/macos-x64
+      - uses: actions/download-artifact@v4
+        with:
+          name: natives-linux-x64
+          path: build/natives/linux-x64
+      - uses: actions/download-artifact@v4
+        with:
+          name: natives-linux-arm64
+          path: build/natives/linux-arm64
+      - uses: actions/download-artifact@v4
+        with:
+          name: natives-windows-x64
+          path: build/natives/windows-x64
+
+      - name: Verify each pair is complete
+        run: |
+          check_pair() { # dir file1 file2
+            for f in "$2" "$3"; do
+              if [ ! -f "build/natives/$1/$f" ]; then
+                echo "::error::build/natives/$1 is missing $f" >&2
+                exit 1
+              fi
+            done
+            ls -l "build/natives/$1"
+          }
+          check_pair macos-arm64   libcorvidjni.dylib libcorvid.dylib
+          check_pair macos-x64     libcorvidjni.dylib libcorvid.dylib
+          check_pair linux-x64     libcorvidjni.so   libcorvid.so
+          check_pair linux-arm64   libcorvidjni.so   libcorvid.so
+          check_pair windows-x64   corvidjni.dll     corvid.dll
+
+      - name: Assemble + sign the bundle (Gradle maven-publish)
+        run: >
+          ./gradlew publishMavenPublicationToStagingRepository
+          -Pversion="${GITHUB_REF_NAME#v}"
+          --console=plain --no-daemon
+
+      - name: Upload the bundle to the Central Portal
+        uses: spring-io/central-publish-action@v0.4.0
+        with:
+          token-name: ${{ secrets.CENTRAL_PORTAL_TOKEN_NAME }}
+          token: ${{ secrets.CENTRAL_PORTAL_TOKEN }}
+          dir: build/staging
+          publishing-type: user_managed
+          deployment-name: corvid-jvm-${{ github.ref_name }}
+
+  publish-skipped:
+    name: Publish SKIPPED — Central Portal credentials not configured
+    needs: [credentials, natives]
+    if: needs.credentials.outputs.configured == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Explain (green, loud)
+        run: |
+          echo "=================================================================="
+          echo "  Maven Central publish SKIPPED: credentials not configured."
+          echo ""
+          echo "  The tag-driven pipeline is ready; it needs the one-time"
+          echo "  setup in docs/maven-central-setup.md:"
+          echo "    1. A Central Portal account + the io.github.corvid-db"
+          echo "       namespace verified (GitHub-based)."
+          echo "    2. A portal user token."
+          echo "    3. A GPG signing key published to a keyserver."
+          echo "    4. Four repo secrets:"
+          echo "         CENTRAL_PORTAL_TOKEN_NAME"
+          echo "         CENTRAL_PORTAL_TOKEN"
+          echo "         ORG_GRADLE_PROJECT_signingKey"
+          echo "         ORG_GRADLE_PROJECT_signingPassword"
+          echo ""
+          echo "  Re-run this tag's workflow (gh run rerun) or push the tag"
+          echo "  again after adding the secrets."
+          echo "=================================================================="
