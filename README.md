@@ -50,10 +50,10 @@ dependencies {
 ```
 
 The version rides the engine's release cascade (engine tag `vX.Y.Z` →
-binding `X.Y.Z`; a tag-driven workflow publishes — see
-[docs/maven-central-setup.md](docs/maven-central-setup.md) for the
-one-time credentials checklist). Until those credentials exist the
-pipeline is ready but dormant: consume from source (below). A first
+binding `X.Y.Z`): a tag-driven workflow assembles, GPG-signs, and
+publishes — the one-time setup is done and `0.4.0` is **live on Maven
+Central** (how it works:
+[docs/maven-central-setup.md](docs/maven-central-setup.md)). A first
 Android consumer request triggers the AAR packaging follow-up ruled in
 [docs/PLAN.md](docs/PLAN.md); the API does not change for it.
 
