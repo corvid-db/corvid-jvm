@@ -307,6 +307,12 @@ jobs:
           dir: build/staging
           publishing-type: user_managed
           deployment-name: corvid-jvm-${{ github.ref_name }}
+          # Gradle's maven-publish staging already carries .md5/.sha1
+          # (and Central's sha256/512); the action's default FAILS on
+          # those. false = the action's OVERWRITE_EXISTING policy
+          # (verified in its ChecksumPolicy source): it rewrites its own
+          # md5/sha1 — identical values — and proceeds.
+          fail-on-existing-checksums: false
 
   publish-skipped:
     name: Publish SKIPPED — Central Portal credentials not configured
