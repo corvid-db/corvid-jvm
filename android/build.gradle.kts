@@ -60,6 +60,16 @@ android {
         // No resources, no manifest surface; the AAR is classes + jniLibs.
         checkReleaseBuilds = false
     }
+
+    // Central's sources/javadoc artifact requirements, the AGP way
+    // (singleVariant wires the component's own jars — see the note by
+    // the publication below).
+    publishing {
+        singleVariant("release") {
+            withSourcesJar()
+            withJavadocJar()
+        }
+    }
 }
 
 kotlin {
@@ -91,64 +101,22 @@ tasks.withType<Test>().configureEach {
     }
 }
 
-// Sources jar (the shared wrapper + any android-local sources).
-val sourcesJar = tasks.register<Jar>("sourcesJar") {
-    group = "publishing"
-    description = "Bundle the wrapper sources compiled into the AAR"
-    archiveClassifier.set("sources")
-    from(file("../src/main/kotlin"))
-    from(file("src/main/kotlin"))
-}
+// AGP's own variant publishing generates the sources + javadoc jars for
+// Central's requirements (singleVariant below) — hand-rolled Jar tasks
+// attached via artifact() collide with the component's artifacts and
+// with AGP's metadata-generation validation (both hit during the first
+// release run: duplicate 'sources' classifier, then the undeclared
+// implicit dependency).
 
-// Javadoc placeholder — same ruling as the root build (Central's javadoc
-// artifact requirement; the project is Kotlin-only and generates none).
-val generateJavadocPlaceholder = tasks.register("generateJavadocPlaceholder") {
-    val out = layout.buildDirectory.dir("javadoc-placeholder")
-    outputs.dir(out)
-    doLast {
-        val file = out.get().file("README.md").asFile
-        file.parentFile.mkdirs()
-        file.writeText(
-            """
-            corvid-android — API documentation placeholder
-            ==============================================
-
-            This jar satisfies Maven Central's javadoc artifact requirement;
-            the project is Kotlin-only and generates no javadoc.
-
-            The binding's contract documentation:
-
-              - canonical engine + C-ABI docs: https://corvid-db.github.io/docs/
-              - binding architecture, JNI discipline, the Android AAR:
-                docs/PLAN.md (in the sources jar and the repository)
-              - API overview + quick start: README.md (repository root)
-
-            The Kotlin API surface (Db, Collection, Query, Field, ...) is the
-            same wrapper the corvid-jvm artifact ships, compiled against
-            android.jar and paired with jniLibs for arm64-v8a and x86_64.
-            """.trimIndent(),
-        )
-    }
-}
-
-val javadocJar = tasks.register<Jar>("javadocJar") {
-    group = "publishing"
-    description = "Bundle the javadoc placeholder"
-    archiveClassifier.set("javadoc")
-    dependsOn(generateJavadocPlaceholder)
-    from(layout.buildDirectory.dir("javadoc-placeholder"))
-}
-
-// AGP creates the `release` software component in afterEvaluate, so the
-// publication (and the signing that references it) is wired there.
+// AGP creates the `release` software component and the publication's
+// metadata task in afterEvaluate, so the publication and the signing
+// that references it are wired there.
 afterEvaluate {
     publishing {
         publications {
             create<MavenPublication>("android") {
                 artifactId = "corvid-android"
                 from(components["release"])
-                artifact(sourcesJar)
-                artifact(javadocJar)
                 pom {
                     name.set("corvid-android")
                     description.set(
