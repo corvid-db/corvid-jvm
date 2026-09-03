@@ -9,6 +9,9 @@ plugins {
     kotlin("jvm") version "2.2.20"
     `maven-publish`
     signing
+    // Dokka: the hosted API reference (docs.yml publishes dokkaHtml
+    // to GitHub Pages — corvid-db.github.io/corvid-jvm).
+    id("org.jetbrains.dokka") version "2.0.0"
 }
 
 repositories {
