@@ -11,17 +11,22 @@
 # exactly the five targets below (NOT android).
 #
 # Legs:
+#   gate        — fail-fast BEFORE the matrix burns 5-15 minutes: the
+#                 tag must match BOTH engine pins (fetch.sh's
+#                 CORVID_VERSION and fetch.ps1's $CorvidVersion — a
+#                 drifted pin would otherwise publish a classifier jar
+#                 carrying the wrong cdylib under the tag, immutable on
+#                 Central), and the credentials check (publishing needs
+#                 a portal user token + GPG key; Central Portal has NO
+#                 OIDC/trusted publishing — secrets are irreducible,
+#                 see docs/maven-central-setup.md). A bad tag is a red
+#                 failure (operator error); unconfigured credentials =
+#                 the publish jobs SKIP with a loud, green explanation.
 #   natives     — one matrix leg per platform: fetch (sha256-verified,
 #                 CORVID_TARGET override for foreign pairs) + compile the
 #                 C-only shim (native runners; macos x64 via cc -arch,
 #                 linux arm64 via gcc-aarch64-linux-gnu — compile-only,
 #                 never loaded on the building host) + upload the pair.
-#   credentials — the secrets gate: publishing needs a portal user token
-#                 + GPG key (Central Portal has NO OIDC/trusted
-#                 publishing — secrets are irreducible; see
-#                 docs/maven-central-setup.md). Unconfigured = the
-#                 publish jobs SKIP with a loud, green explanation
-#                 instead of a red X.
 #   publish     — downloads all five pairs into build/natives/, Gradle
 #                 assembles + signs the bundle into build/staging, the
 #                 spring-io/central-publish-action uploads it
@@ -38,12 +43,35 @@ on:
 
 jobs:
   credentials:
-    name: Central Portal credentials gate
+    name: gate (tag == both engine pins, credentials present)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       configured: ${{ steps.check.outputs.configured }}
     steps:
+      - uses: actions/checkout@v4
+
+      # The tag must equal BOTH pins — fetch.sh's CORVID_VERSION and
+      # fetch.ps1's $CorvidVersion. Checking only fetch.sh let a drifted
+      # fetch.ps1 slip through, and the windows-x64 leg would publish a
+      # classifier jar carrying the stale cdylib under the new tag
+      # (immutable on Central). Runs in the gate so a bad tag fails
+      # before the five-platform matrix spends its minutes.
+      - name: Verify the tag matches BOTH engine pins (release cascade)
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          fail() {
+            echo "::error::$1 The binding publishes on the engine's release cascade: bump the pin in fetch.sh AND fetch.ps1 (CORVID_VERSION / \$CorvidVersion) first, then tag the same version." >&2
+            exit 1
+          }
+          PIN_SH="$(grep -oE '^CORVID_VERSION="v[^"]+"' fetch.sh | head -1 | cut -d'"' -f2)"
+          [ -n "$PIN_SH" ] || fail "cannot read CORVID_VERSION from fetch.sh."
+          [ "$TAG" = "$PIN_SH" ] || fail "tag $TAG does not match the engine pin $PIN_SH in fetch.sh."
+          PIN_PS1="$(grep -oE '^\$CorvidVersion = "v[^"]+"' fetch.ps1 | head -1 | cut -d'"' -f2)"
+          [ -n "$PIN_PS1" ] || fail "cannot read \$CorvidVersion from fetch.ps1."
+          [ "$TAG" = "$PIN_PS1" ] || fail "tag $TAG does not match the engine pin $PIN_PS1 in fetch.ps1."
+          echo "tag $TAG == engine pins (fetch.sh $PIN_SH, fetch.ps1 $PIN_PS1)"
+
       - name: Check the four repo secrets exist
         id: check
         env:
@@ -62,6 +90,9 @@ jobs:
 
   natives:
     name: natives (${{ matrix.classifier }})
+    # Behind the gate: a tag that misses either engine pin fails in
+    # seconds here instead of after the matrix's five legs.
+    needs: credentials
     runs-on: ${{ matrix.runs-on }}
     timeout-minutes: 15
     strategy:
@@ -178,15 +209,7 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Verify the tag matches the engine pin (release cascade)
-        run: |
-          TAG="${GITHUB_REF_NAME}"
-          PIN="$(grep -oE '^CORVID_VERSION="v[^"]+"' fetch.sh | head -1 | cut -d'"' -f2)"
-          if [ "$TAG" != "$PIN" ]; then
-            echo "::error::tag $TAG does not match the engine pin $PIN in fetch.sh. The binding publishes on the engine's release cascade: bump CORVID_VERSION (fetch.sh + fetch.ps1) first, then tag the same version." >&2
-            exit 1
-          fi
-          echo "tag $TAG == engine pin $PIN"
+      # Tag-vs-pin parity already failed fast in the gate job.
 
       - uses: actions/download-artifact@v4
         with:
