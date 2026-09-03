@@ -194,6 +194,12 @@ jobs:
       - name: Stage the pair under build/natives/${{ matrix.classifier }}
         shell: bash
         run: |
+          # The macos-arm64 leg compiles its shim on the runner's HOST
+          # arch implicitly (arch: ''; fetch.sh pins only the cdylib's
+          # target). RISK: if GitHub ever flips macos-latest to x64,
+          # this classifier jar would silently carry x64 binaries —
+          # check_pair in the publish job verifies file NAMES only.
+          [ "${{ matrix.classifier }}" != macos-arm64 ] || [ "$(uname -m)" = arm64 ] || { echo "::error::macos-arm64 leg is running on $(uname -m), not arm64 — macos-latest is no longer an arm64 runner; the macos-arm64 jar would silently carry x64 binaries." >&2; exit 1; }
           mkdir -p "build/natives/${{ matrix.classifier }}"
           cp build/native/* "build/natives/${{ matrix.classifier }}/"
           ls -l "build/natives/${{ matrix.classifier }}"
