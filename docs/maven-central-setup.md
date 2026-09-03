@@ -92,9 +92,11 @@ an unconfigured repo is never a red X.
 The binding version rides the engine's **release cascade**: engine tag
 `vX.Y.Z` → `io.github.corvid-db:corvid-jvm:X.Y.Z`.
 
-1. Bump the engine pin (PR changing `CORVID_VERSION` in `fetch.sh` and
-   `$CorvidVersion` in `fetch.ps1`) and merge — the normal pin-bump PRs
-   (#2–#5) are the template.
+1. Bump the engine pin (PR changing `CORVID_VERSION` in `fetch.sh`,
+   `$CorvidVersion` in `fetch.ps1`, **and** the `<version>` coordinates
+   in README.md's Installing section) and merge — the normal pin-bump
+   PRs (#2–#5) are the template. The release gate verifies all three
+   against the tag and fails loudly naming whichever lags.
 2. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z` (the tag
    must **equal** the pin; the workflow verifies this and fails with an
    explanation otherwise). `-Pversion` is derived from the tag, which
@@ -113,6 +115,17 @@ The binding version rides the engine's **release cascade**: engine tag
 5. After release, the artifacts serve from
    `repo.maven.apache.org` within ~10–30 minutes; the search index
    lags a bit longer.
+
+**First release published 2026-09-03** (`0.4.0`). The three failures
+on the way there are now permanently encoded in the pipeline: the gate
+shape-diagnoses the signing-key secret (a mangled paste failed at
+Gradle after the matrix), the upload runs with
+`fail-on-existing-checksums: false` (Gradle's staging checksums vs the
+action's — semantics verified from the action's ChecksumPolicy
+source), and Gradle's `maven-metadata.xml` is stripped from the
+staging tree before upload (Central rejects content at the no-version
+level). Consumer-verified end to end from a scratch Gradle project
+resolving only from Central.
 
 ## What was deliberately NOT automated
 
