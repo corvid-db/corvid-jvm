@@ -18,6 +18,7 @@ private fun show(label: String, keys: List<ByteArray>) {
     println("%-36s [%s]".format(label, keys.joinToString(" ") { String(it) }))
 }
 
+// docs:begin:graph
 fun main() {
     openMemory().use { db ->
         val nodes = db.collection("nodes")
@@ -55,3 +56,4 @@ fun main() {
         nodes.close()
     }
 }
+// docs:end:graph

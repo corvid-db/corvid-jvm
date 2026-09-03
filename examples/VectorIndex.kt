@@ -50,6 +50,7 @@ private fun runQuery(items: corvid.Collection, field: String, approx: Boolean, l
     println("%-38s %s".format(label, line))
 }
 
+// docs:begin:vector_index
 fun main() {
     val path = Path.of(System.getProperty("java.io.tmpdir"), "corvid-jvm-example-vector-index.redb")
     Files.deleteIfExists(path) // reruns start clean (single-file db)
@@ -84,3 +85,4 @@ fun main() {
 
     Files.deleteIfExists(path)
 }
+// docs:end:vector_index

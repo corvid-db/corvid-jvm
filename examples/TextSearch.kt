@@ -42,6 +42,7 @@ private fun phrase(notes: corvid.Collection, query: String, label: String) {
     println("%-28s -> %s".format(label, line))
 }
 
+// docs:begin:text_search
 fun main() {
     openMemory().use { db ->
         val notes = db.collection("notes")
@@ -63,3 +64,4 @@ fun main() {
         notes.close()
     }
 }
+// docs:end:text_search

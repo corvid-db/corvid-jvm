@@ -31,6 +31,7 @@ private fun show(label: String, hits: List<corvid.GeoHit>) {
     println("%-34s [%s]".format(label, line))
 }
 
+// docs:begin:geo
 fun main() {
     openMemory().use { db ->
         val places = db.collection("places")
@@ -50,3 +51,4 @@ fun main() {
         places.close()
     }
 }
+// docs:end:geo
